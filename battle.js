@@ -82,22 +82,22 @@ class BattleManager {
 }
 
 // Set up (should these be consts?)
-let user = new Opponent("User");
-let computer = new Opponent("Computer");
-let bm = new BattleManager();
+// let user = new Opponent("User");
+// let computer = new Opponent("Computer");
+// let bm = new BattleManager();
 
 // Some tests
-let result = bm.decide({
-  opponent: user.name,
-  choice: Types.ROCK
-}, {
-  opponent: computer.name,
-  choice: Types.SCISSORS
-});
+// let result = bm.decide({
+//   opponent: user.name,
+//   choice: Types.ROCK
+// }, {
+//   opponent: computer.name,
+//   choice: Types.SCISSORS
+// });
 
 // Decide who gets hit (if it's a tie, you might want to do some other fun stuff like weapon clashes)
-user.changeHealth(Helpers.judgeAgainst(result, user, Outcomes.LOSE, Values.DMG));
-computer.changeHealth(Helpers.judgeAgainst(result, computer, Outcomes.WIN, Values.DMG));
+// user.changeHealth(Helpers.judgeAgainst(result, user, Outcomes.LOSE, Values.DMG));
+// computer.changeHealth(Helpers.judgeAgainst(result, computer, Outcomes.WIN, Values.DMG));
 
-if (result === Outcomes.TIE)
-  console.info("There was a tie.");
+// if (result === Outcomes.TIE)
+//   console.info("There was a tie.");

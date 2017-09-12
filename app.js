@@ -41,7 +41,6 @@ var json = [{
   "actions": []
 }];
 
-
 //
 const ENTITY = {
   NPC: 0,
@@ -225,18 +224,27 @@ const game = new Phaser.Game(256, 256, Phaser.CANVAS, 'phaser-example', {
 function preload() {
 
   game.load.image('hero', 'https://raw.githubusercontent.com/Josh-Miller/public-images/master/plane.png');
+  game.load.image('some-npc', 'https://raw.githubusercontent.com/Josh-Miller/public-images/master/plane.png');
   // game.load.spritesheet('veggies', 'assets/sprites/fruitnveg32wh37.png', 32, 32);
 
 }
 
 function create() {
 
-  // Modes
-  changeMode(APPMODES.FIELD);
-
   // Game systems
   game.physics.startSystem(Phaser.Physics.ARCADE);
   game.stage.backgroundColor = '#2d2d2d';
+
+  // Init dialogue:
+  let dialogue = new QNodeController();
+  this.dialogueController = dialogue;
+
+  // The question: Should json be prepared for each, or shall it just come from a repo?
+  // How will this work if source data changes from entity to entity? Does it at all?
+  // Is it worth just loading it for the area, then load it based on ID?
+  dialogue.ParseData(json, function (d) {
+    console.log("A conversation finished:", d);
+  }, true);
 
   // This risks getting messy, just ensure that stuff is separated out per thing it does.
   this.wallgroup = game.add.group();
@@ -251,10 +259,9 @@ function create() {
     console.info(name + " was used.");
 
     // Starts a global action state (chat)
-    changeMode(APPMODES.CHAT);
-    this.dialogueController.Start()
+    dialogue.Start();
 
-  });
+  }, this);
 
   this.npcs.add(npc);
 
@@ -263,18 +270,12 @@ function create() {
 
   // Key (easier as global)
   this.interactionKey = game.input.keyboard.addKey(Phaser.Keyboard.E);
+
+  /// This idea falls down because it expects that you 'know' what you're interacting with at that particular time.
+  // So far the only thing I can think of is to get your current targets type, then form a decision based from that. It doesn't
+  // expect you to know what you're dealing with, it just passes its type back through the pipeline, then you can do an interaction
+  // check from that point.
   this.interactionKey.onDown.add(onInteraction, this);
-
-  // Init dialogue:
-  this.dialogueController = new QNodeController();
-
-  // The question: Should json be prepared for each, or shall it just come from a repo?
-  // How will this work if source data changes from entity to entity? Does it at all?
-  // Is it worth just loading it for the area, then load it based on ID?
-  this.dialogueController.ParseData(json, function (d) {
-    console.log("A conversation finished:", d);
-    changeMode(APPMODES.FIELD);
-  }, true);
 
 }
 
@@ -286,10 +287,6 @@ function update() {
     player.assignTarget(npc);
   }, null, this);
 
-}
-
-function changeMode(mode) {
-  this.APPMODE = mode;
 }
 
 function runDialogue() {
@@ -309,9 +306,9 @@ function runDialogue() {
 
 }
 
-function onInteraction() {
+function onInteraction(APPMODE) {
 
-  switch (this.APPMODE) {
+  switch (APPMODE) {
     case APPMODES.FIELD:
       this.hero.interactWithTarget();
       break;
