@@ -25,10 +25,12 @@ const Helpers = {
 
 class Opponent {
 
-  constructor(name) {
+  constructor(name, stats) {
+    
     this.name = name;
-    this.maxHP = 6;
-    this.HP = 6;
+    this.maxHP = stats.maxHP;
+    this.HP = stats.HP;
+
   }
 
   changeHealth(n) {
@@ -58,6 +60,7 @@ class Opponent {
 
 class BattleManager {
 
+  // This is a very naive random method, this can easily be improved
   getRandomIntInclusive(min, max) {
 
 		// This parts for AI really
