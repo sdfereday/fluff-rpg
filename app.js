@@ -14,7 +14,7 @@ Will need:
 // Some data (conversation)
 /// You could quite easily re-engineer this 'thing' to use for scripted events also. With a couple of asyn and event callbacks. I'd suggest bolting on a module to the core however, as it should be left pristine.
 // Data mockup (we'd likely auto-generate this on the fly). So for each new node made with text, it gets a guid. Then when we set a link to it, we plant that guid in the linked bit. Or an index, whatever works.
-var json = [{
+var areaJSON = [{
   "id": "0",
   "text": "Huh.",
   "linked": ["1"],
@@ -41,16 +41,28 @@ var json = [{
   "actions": []
 }];
 
-//
+//...
 const ENTITY = {
+  NULLED: -1,
   NPC: 0,
   PLAYER: 1
 };
 
-const APPMODES = {
+const APPSTATES = {
   FIELD: 0,
-  CHAT: 1
+  BUSY: 1
 };
+
+// Global app mode (viewable by all, to revise)
+let appState = APPSTATES.FIELD;
+class AppState {
+  static getCurrentState() {
+    return appState;
+  }
+  static setCurrentState(mode) {
+    appState = mode;
+  }
+}
 
 /// Helpers
 let mix = (superclass) => new MixinBuilder(superclass);
@@ -65,7 +77,7 @@ class MixinBuilder {
   }
 }
 
-/// Components (class-likes)
+/// Components to implement if needed
 let UserControlled = (superclass) => class extends superclass {
 
   initCursors() {
@@ -85,6 +97,23 @@ let UserControlled = (superclass) => class extends superclass {
 
 };
 
+let UserInteraction = (superclass) => class extends superclass {
+
+  initInteractions() {
+
+    this.interactionKey = this.game.input.keyboard.addKey(Phaser.Keyboard.E);
+
+  }
+
+  onInteractionEvent(cb, ctx) {
+
+    ctx = ctx ? ctx : this;
+    this.interactionKey.onDown.add(cb.bind(ctx));
+
+  }
+
+};
+
 /// Data holders
 class PlayerInventory {
 
@@ -94,38 +123,48 @@ class PlayerInventory {
 
 }
 
+/// Base Entity
+class BaseEntity extends Phaser.Sprite {
+
+  constructor(game, x, y, name) {
+
+    // Phaser requires all of these to happen
+    super(game, x, y, name);
+    game.add.existing(this);
+    game.physics.arcade.enable(this);
+
+    this.id = "???";
+    this.name = name;
+    this.typeIs = ENTITY.NULLED;
+
+  }
+
+}
+
 /// Entities
-class Hero extends mix(Phaser.Sprite).with(UserControlled) {
+class Hero extends mix(BaseEntity).with(UserControlled, UserInteraction) {
 
   constructor(game, x, y, name) {
 
     // Phaser requires all of these to happen
     super(game, x, y, name);
 
-    game.add.existing(this);
-    game.physics.arcade.enable(this);
-
     // Custom stats and things
-    this.id = "???";
-    this.name = name;
-
     this.stats = {
       hp: 4,
       maxHp: 4
     }
 
     this.config = {
-      movementSpeed: 200,
-      typeIs: ENTITY.PLAYER
+      movementSpeed: 200
     }
 
+    this.typeIs = ENTITY.PLAYER;
+
     // Component initializers
-    this.initCursors(game);
+    this.initCursors();
+    this.initInteractions();
 
-  }
-
-  typeIs() {
-    return this.config.typeIs;
   }
 
   update() {
@@ -140,75 +179,45 @@ class Hero extends mix(Phaser.Sprite).with(UserControlled) {
 
   assignTarget(obj) {
 
-    if (!this.busy)
-      this.currentTarget = obj;
+    this.currentTarget = obj;
 
   }
 
-  interactWithTarget() {
+  getTargetType() {
 
-    if (this.busy)
-      return;
-
-    if (this.currentTarget) {
-      this.currentTarget.use();
-      this.busy = true;
-    }
+    return this.currentTarget ? this.currentTarget.typeIs : ENTITY.NULLED;
 
   }
 
 }
 
-class NPC extends mix(Phaser.Sprite).with() {
+class NPC extends BaseEntity {
 
   constructor(game, x, y, name) {
 
     // Phaser requires all of these to happen
     super(game, x, y, name);
 
-    game.add.existing(this);
-    game.physics.arcade.enable(this);
-
     // Custom stats and things
-    this.id = "???";
-    this.name = name;
-
     this.stats = {
       hp: 4,
       maxHp: 4
     }
 
     this.config = {
-      movementSpeed: 200,
-      typeIs: ENTITY.NPC
+      movementSpeed: 200
     }
+
+    this.typeIs = ENTITY.NPC
 
     // Component initializers
     // ...
-
-    // Callbacks (consider revising callbacks TODO)
-    this.onUsed = null;
-
-  }
-
-  typeIs() {
-    return this.config.typeIs;
-  }
-
-  onUsedEvent(cb) {
-
-    if (typeof cb === 'function')
-      this.onUsed = cb;
 
   }
 
   use() {
 
-    // Do default action, and if a callback has been defined, run that also (great for exterior needs)
-    // ...
-
-    if (this.onUsed)
-      this.onUsed.call(this, this.id, this.name);
+    return this.typeIs;
 
   }
 
@@ -235,61 +244,51 @@ function create() {
   game.physics.startSystem(Phaser.Physics.ARCADE);
   game.stage.backgroundColor = '#2d2d2d';
 
-  // Init dialogue:
-  let dialogue = new QNodeController();
-  this.dialogueController = dialogue;
-
-  // The question: Should json be prepared for each, or shall it just come from a repo?
-  // How will this work if source data changes from entity to entity? Does it at all?
-  // Is it worth just loading it for the area, then load it based on ID?
-  dialogue.ParseData(json, function (d) {
-    console.log("A conversation finished:", d);
-  }, true);
-
   // This risks getting messy, just ensure that stuff is separated out per thing it does.
   this.wallgroup = game.add.group();
   this.npcs = game.add.group();
 
+  // Init some dialogue
+  this.dialogueController = new QNodeController();
+  this.dialogueController.ParseData(areaJSON, function (d) {
+    console.log("A conversation finished:", d);
+    onEventFinished();
+  }, true);
+
+  // Make some entities
   this.hero = new Hero(game, 100, 100, 'hero');
-
-  let npc = new NPC(game, 10, 10, 'some-npc');
-  npc.onUsedEvent(function (id, name) {
-
-    // Do a thing, perhaps tap in to conversationeer, who knows?
-    console.info(name + " was used.");
-
-    // Starts a global action state (chat)
-    dialogue.Start();
-
+  this.hero.onInteractionEvent(function () {
+    console.log("An interaction started:", this.hero.getTargetType());
+    onInteraction.call(this, this.hero.getTargetType());
   }, this);
 
+  let npc = new NPC(game, 10, 10, 'some-npc');
   this.npcs.add(npc);
-
-  // And so on and so forth...
-  // ...
-
-  // Key (easier as global)
-  this.interactionKey = game.input.keyboard.addKey(Phaser.Keyboard.E);
-
-  /// This idea falls down because it expects that you 'know' what you're interacting with at that particular time.
-  // So far the only thing I can think of is to get your current targets type, then form a decision based from that. It doesn't
-  // expect you to know what you're dealing with, it just passes its type back through the pipeline, then you can do an interaction
-  // check from that point.
-  this.interactionKey.onDown.add(onInteraction, this);
 
 }
 
 function update() {
 
+  // Global state is a bit of a no no, and must be avoided if at all possible. TODO.
+  if (appState === APPSTATES.BUSY)
+    return;
+
   game.physics.arcade.collide(this.hero, this.wallgroup);
 
   this.game.physics.arcade.overlap(this.hero, this.npcs, function (player, npc) {
+    // This is also quite global state ish. It'd be better if it some how just got the current collider by
+    // asking the physics system on demand, as opposed to assigning in the shadows.
     player.assignTarget(npc);
   }, null, this);
 
 }
 
 function runDialogue() {
+
+  if(!this.dialogueController.started) {
+    this.dialogueController.Start();
+    return;
+  }
 
   // If you really feel daring, consider adding 'events' to the enter and
   // exit of the nodes. This will add for even more flexibility. 'If'.
@@ -306,15 +305,19 @@ function runDialogue() {
 
 }
 
-function onInteraction(APPMODE) {
+function onInteraction(targetType) {
 
-  switch (APPMODE) {
-    case APPMODES.FIELD:
-      this.hero.interactWithTarget();
-      break;
-    case APPMODES.CHAT:
-      runDialogue();
+  switch (targetType) {
+    case ENTITY.NPC:
+      AppState.setCurrentState(APPSTATES.BUSY);
+      runDialogue.call(this);
       break;
   }
+
+}
+
+function onEventFinished() {
+
+  AppState.setCurrentState(APPSTATES.FIELD);
 
 }
