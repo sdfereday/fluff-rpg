@@ -80,7 +80,7 @@ class QNodeController {
     }
 
     // NodeController data parser (public facing)
-    ParseData(data, onFinished, linkOrigin) {
+    ParseData(data, linkOrigin) {
 
         var self = this;
 
@@ -103,20 +103,21 @@ class QNodeController {
             });
         }
 
-        // and callback
-        if (typeof onFinished === 'function')
-            this.onComplete = onFinished;
-
         return this;
 
     }
 
     // NodeController access (public facing)
-    Start() {
+    Start(onFinishedCallback) {
+
+        if (this.started)
+            return;
 
         this.started = true;
         this.activeNode = this.nodes[0];
         this.activeNode.Enter();
+
+        this.onFinished = onFinishedCallback;
 
         return [this.activeNode];
 
@@ -143,11 +144,14 @@ class QNodeController {
     Next() {
 
         if (this.activeNode && this.activeNode.isEnd && this.onComplete) {
+
             this.started = false;
-            this.onComplete({
-                "duh": "blooo"
-            });
+
+            if (this.onFinished)
+                this.onFinished();
+
             return;
+
         }
 
         if (!this.started)

@@ -125,26 +125,13 @@ class Hero extends BaseEntity {
     this.stats = {
       hp: 4,
       maxHp: 4
-    }
+    };
 
     this.config = {
       movementSpeed: 200
-    }
+    };
 
     this.typeIs = ENTITY.PLAYER;
-
-  }
-
-  assignTarget(obj) {
-
-    // As mentioned, this shouldn't really be this way.
-    this.currentTarget = obj;
-
-  }
-
-  getTargetType() {
-
-    return this.currentTarget ? this.currentTarget.typeIs : ENTITY.NULLED;
 
   }
 
@@ -167,7 +154,7 @@ class NPC extends BaseEntity {
       movementSpeed: 200
     }
 
-    this.typeIs = ENTITY.NPC
+    this.typeIs = ENTITY.NPC;
 
   }
 
@@ -196,51 +183,56 @@ function preload() {
 
 function create() {
 
-  // App state fsm (runs on top of the actual game layer here)
-  this.appFSM = new AppFSM([FieldState, ChatState], this, this.game);
-
   // Game systems
   game.physics.startSystem(Phaser.Physics.ARCADE);
   game.stage.backgroundColor = '#2d2d2d';
 
+  // Init some dialogue
+  this.dialogueController = new QNodeController();
+
+  // App state fsm (runs on top of the actual game layer here)
+  this.appFSM = new AppFSM([FieldState, ChatState], this, this.game);
+
   // This risks getting messy, just ensure that stuff is separated out per thing it does.
   this.wallgroup = game.add.group();
   this.npcs = game.add.group();
-
-  // Init some dialogue
-  this.dialogueController = new QNodeController();
 
   // Make some entities
   this.hero = new Hero(game, 100, 100, 'hero');
   let npc = new NPC(game, 10, 10, 'some-npc');
   this.npcs.add(npc);
 
-  // Whatever state is active, do its default thing
+  // Parse data and fire event went conversation over
+  this.dialogueController.ParseData(areaJSON, true);
+  this.lastTargetType = ENTITY.NULLED;
+
+  // Sort out app state management
   this.interactionKey = this.game.input.keyboard.addKey(Phaser.Keyboard.E);
-  this.interactionKey.onDown.add(this.appFSM.onInteract);
+  this.interactionKey.onDown.add(() => {
+
+    if (this.lastTargetType === ENTITY.NPC && this.appFSM.notCurrent("chatState"))
+      this.appFSM.push("chatState");
+
+    this.appFSM.onInput.call(this.appFSM);
+
+  });
+
+  // Start with field state
+  this.appFSM.push("fieldState");
 
 }
 
 function update() {
 
+  this.lastTargetType = ENTITY.NULLED;
+
+  this.game.physics.arcade.collide(this.hero, this.wallgroup);
+  this.game.physics.arcade.overlap(this.hero, this.npcs, function(a, b){
+    this.lastTargetType = b.typeIs;
+  }, null, this);
+
   this.appFSM.update();
-
-}
-
-function onInteraction(targetType) {
-
-  switch (targetType) {
-    case ENTITY.NPC:
-      this.appFSM.enter("chatState");
-      break;
-  }
-
-}
-
-function onEventFinished() {
-
-  this.appFSM.enter("fieldState");
-
+  
 }
 
 /// App state runner (avoids global state... sorta)
@@ -254,29 +246,29 @@ class AppFSM {
 
     this.stack = [];
     this.stack.push(new BaseState());
+    this.currentState = this.top();
 
   }
 
-  onInteract() {
+  onInput() {
 
-    this.top().onInteract();
+    this.top().onInput();
 
   }
 
-  enter(stateName, owner) {
+  notCurrent(name) {
 
-    if (this.stack.length > 1)
-      this.pop();
+    return this.currentState.name !== name;
 
-    let exists = this.stack.find(x => x.name === stateName),
-      currentState;
+  }
 
-    if (!exists) {
+  push(stateName) {
 
-      currentState = this.immutable.find(x => x.name === stateName);
-      currentState.enter(owner);
+    if (!this.stack.find(x => x.name === stateName)) {
 
-      this.stack.push(currentState);
+      this.currentState = this.immutable.find(x => x.name === stateName);
+      this.currentState.enter();
+      this.stack.push(this.currentState);
 
     }
 
@@ -292,39 +284,49 @@ class AppFSM {
   }
 
   top() {
+
     return this.stack[this.stack.length - 1];
+
   }
 
   pop() {
+
+    if (this.stack.length < 2)
+      return;
+
     this.top().exit();
     this.stack.splice(this.stack.length - 1, 1);
+
   }
 
 }
 
 class BaseState {
+
+  constructor(owner, game) {
+    // ...
+  }
+
+  onInput() { }
   enter() { }
   update() { }
   exit() { }
+
 }
 
-class FieldState extends mix({}).with(UserControlled) {
+class FieldState extends mix(BaseState).with(UserControlled) {
+  // Bit odd having user controller here. Instead just enable / disable movement to hero and put this back in to the entity instead.
 
   constructor(owner, game) {
+
+    super();
 
     this.name = "fieldState";
     this.owner = owner;
     this.game = game;
-    this.isFinished = false;
+    this.currentTargetType = ENTITY.NULLED;
 
     this.initCursors();
-    this.initInteractions();
-
-  }
-
-  enter() {
-
-    this.isFinished = false;
 
   }
 
@@ -333,72 +335,44 @@ class FieldState extends mix({}).with(UserControlled) {
     // As pure as I can think of right now.
     let dir = this.inputDirection();
 
-    this.hero.body.velocity.x = dir.x * this.config.movementSpeed;
-    this.hero.body.velocity.y = dir.y * this.config.movementSpeed;
+    this.owner.hero.body.velocity.x = dir.x * this.owner.hero.config.movementSpeed;
+    this.owner.hero.body.velocity.y = dir.y * this.owner.hero.config.movementSpeed;
 
-    this.game.physics.arcade.collide(this.hero, this.wallgroup);
-    this.game.physics.arcade.overlap(this.hero, this.npcs, function (player, npc) {
-      // This is also quite global state ish. It'd be better if it some how just got the current collider by
-      // asking the physics system on demand, as opposed to assigning in the shadows.
-      player.assignTarget(npc); // Please change, it's too tightly coupled.
-    }, null, this);
-
-  }
-
-  exit() {
-    this.isFinished = true;
-  }
-
-  onInteraction() {
-    exit();
   }
 
 }
 
-class ChatState {
+class ChatState extends BaseState {
 
   constructor(owner, game) {
+
+    super();
 
     this.name = "chatState";
     this.owner = owner;
     this.game = game;
+    this.dialogueController = owner.dialogueController; // TODO: improve as dep.
+
     this.isFinished = false;
 
-    this.dialogueController.ParseData(areaJSON, function (d) {
-      console.log("A conversation finished:", d);
+  }
+
+  onInput() {
+
+    let result = this.dialogueController.Next();
+    console.log(result);
+
+  }
+
+  enter() {
+
+    this.isFinished = false;
+    this.dialogueController.Start((exitData) => {
       this.exit();
-    }, true);
+    });
 
   }
-
-  enter(dialogueDep) {
-
-    this.isFinished = false;
-
-    if (!dialogueDep.started) {
-      dialogueDep.Start();
-      return;
-    }
-
-    // If you really feel daring, consider adding 'events' to the enter and
-    // exit of the nodes. This will add for even more flexibility. 'If'.
-    let result = dialogueDep.Next();
-
-    if (result.length > 1) {
-      console.info("Result was question:");
-      console.log(result);
-      // nodeController.Answer(1) - wait for input...
-    } else {
-      console.info("Result was speech");
-      console.log(result[0]);
-    }
-
-  }
-
-  update() {
-    // ...
-  }
-
+  
   exit() {
 
     this.isFinished = true;
