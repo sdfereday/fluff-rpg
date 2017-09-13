@@ -53,17 +53,6 @@ const APPSTATES = {
   BUSY: 1
 };
 
-// Global app mode (viewable by all, to revise)
-let appState = APPSTATES.FIELD;
-class AppState {
-  static getCurrentState() {
-    return appState;
-  }
-  static setCurrentState(mode) {
-    appState = mode;
-  }
-}
-
 /// Helpers
 let mix = (superclass) => new MixinBuilder(superclass);
 
@@ -97,24 +86,7 @@ let UserControlled = (superclass) => class extends superclass {
 
 };
 
-let UserInteraction = (superclass) => class extends superclass {
-
-  initInteractions() {
-
-    this.interactionKey = this.game.input.keyboard.addKey(Phaser.Keyboard.E);
-
-  }
-
-  onInteractionEvent(cb, ctx) {
-
-    ctx = ctx ? ctx : this;
-    this.interactionKey.onDown.add(cb.bind(ctx));
-
-  }
-
-};
-
-/// Data holders
+/// Data holders (too global?)
 class PlayerInventory {
 
   constructor() {
@@ -142,7 +114,7 @@ class BaseEntity extends Phaser.Sprite {
 }
 
 /// Entities
-class Hero extends mix(BaseEntity).with(UserControlled, UserInteraction) {
+class Hero extends BaseEntity {
 
   constructor(game, x, y, name) {
 
@@ -161,24 +133,11 @@ class Hero extends mix(BaseEntity).with(UserControlled, UserInteraction) {
 
     this.typeIs = ENTITY.PLAYER;
 
-    // Component initializers
-    this.initCursors();
-    this.initInteractions();
-
-  }
-
-  update() {
-
-    // As pure as I can think of right now.
-    let dir = this.inputDirection();
-
-    this.body.velocity.x = dir.x * this.config.movementSpeed;
-    this.body.velocity.y = dir.y * this.config.movementSpeed;
-
   }
 
   assignTarget(obj) {
 
+    // As mentioned, this shouldn't really be this way.
     this.currentTarget = obj;
 
   }
@@ -210,9 +169,6 @@ class NPC extends BaseEntity {
 
     this.typeIs = ENTITY.NPC
 
-    // Component initializers
-    // ...
-
   }
 
   use() {
@@ -240,6 +196,9 @@ function preload() {
 
 function create() {
 
+  // App state fsm (runs on top of the actual game layer here)
+  this.appFSM = new AppFSM([FieldState, ChatState], this, this.game);
+
   // Game systems
   game.physics.startSystem(Phaser.Physics.ARCADE);
   game.stage.backgroundColor = '#2d2d2d';
@@ -250,58 +209,21 @@ function create() {
 
   // Init some dialogue
   this.dialogueController = new QNodeController();
-  this.dialogueController.ParseData(areaJSON, function (d) {
-    console.log("A conversation finished:", d);
-    onEventFinished();
-  }, true);
 
   // Make some entities
   this.hero = new Hero(game, 100, 100, 'hero');
-  this.hero.onInteractionEvent(function () {
-    console.log("An interaction started:", this.hero.getTargetType());
-    onInteraction.call(this, this.hero.getTargetType());
-  }, this);
-
   let npc = new NPC(game, 10, 10, 'some-npc');
   this.npcs.add(npc);
+
+  // Whatever state is active, do its default thing
+  this.interactionKey = this.game.input.keyboard.addKey(Phaser.Keyboard.E);
+  this.interactionKey.onDown.add(this.appFSM.onInteract);
 
 }
 
 function update() {
 
-  // Global state is a bit of a no no, and must be avoided if at all possible. TODO.
-  if (appState === APPSTATES.BUSY)
-    return;
-
-  game.physics.arcade.collide(this.hero, this.wallgroup);
-
-  this.game.physics.arcade.overlap(this.hero, this.npcs, function (player, npc) {
-    // This is also quite global state ish. It'd be better if it some how just got the current collider by
-    // asking the physics system on demand, as opposed to assigning in the shadows.
-    player.assignTarget(npc);
-  }, null, this);
-
-}
-
-function runDialogue() {
-
-  if(!this.dialogueController.started) {
-    this.dialogueController.Start();
-    return;
-  }
-
-  // If you really feel daring, consider adding 'events' to the enter and
-  // exit of the nodes. This will add for even more flexibility. 'If'.
-  let result = this.dialogueController.Next();
-
-  if (result.length > 1) {
-    console.info("Result was question:");
-    console.log(result);
-    // nodeController.Answer(1) - wait for input...
-  } else {
-    console.info("Result was speech");
-    console.log(result[0]);
-  }
+  this.appFSM.update();
 
 }
 
@@ -309,8 +231,7 @@ function onInteraction(targetType) {
 
   switch (targetType) {
     case ENTITY.NPC:
-      AppState.setCurrentState(APPSTATES.BUSY);
-      runDialogue.call(this);
+      this.appFSM.enter("chatState");
       break;
   }
 
@@ -318,6 +239,170 @@ function onInteraction(targetType) {
 
 function onEventFinished() {
 
-  AppState.setCurrentState(APPSTATES.FIELD);
+  this.appFSM.enter("fieldState");
+
+}
+
+/// App state runner (avoids global state... sorta)
+class AppFSM {
+
+  constructor(states, owner, gameObject) {
+
+    this.immutable = states.map(function (stateCLS) {
+      return new stateCLS(owner, gameObject);
+    });
+
+    this.stack = [];
+    this.stack.push(new BaseState());
+
+  }
+
+  onInteract() {
+
+    this.top().onInteract();
+
+  }
+
+  enter(stateName, owner) {
+
+    if (this.stack.length > 1)
+      this.pop();
+
+    let exists = this.stack.find(x => x.name === stateName),
+      currentState;
+
+    if (!exists) {
+
+      currentState = this.immutable.find(x => x.name === stateName);
+      currentState.enter(owner);
+
+      this.stack.push(currentState);
+
+    }
+
+  }
+
+  update() {
+
+    if (this.top().isFinished)
+      this.pop();
+
+    this.top().update();
+
+  }
+
+  top() {
+    return this.stack[this.stack.length - 1];
+  }
+
+  pop() {
+    this.top().exit();
+    this.stack.splice(this.stack.length - 1, 1);
+  }
+
+}
+
+class BaseState {
+  enter() { }
+  update() { }
+  exit() { }
+}
+
+class FieldState extends mix({}).with(UserControlled) {
+
+  constructor(owner, game) {
+
+    this.name = "fieldState";
+    this.owner = owner;
+    this.game = game;
+    this.isFinished = false;
+
+    this.initCursors();
+    this.initInteractions();
+
+  }
+
+  enter() {
+
+    this.isFinished = false;
+
+  }
+
+  update() {
+
+    // As pure as I can think of right now.
+    let dir = this.inputDirection();
+
+    this.hero.body.velocity.x = dir.x * this.config.movementSpeed;
+    this.hero.body.velocity.y = dir.y * this.config.movementSpeed;
+
+    this.game.physics.arcade.collide(this.hero, this.wallgroup);
+    this.game.physics.arcade.overlap(this.hero, this.npcs, function (player, npc) {
+      // This is also quite global state ish. It'd be better if it some how just got the current collider by
+      // asking the physics system on demand, as opposed to assigning in the shadows.
+      player.assignTarget(npc); // Please change, it's too tightly coupled.
+    }, null, this);
+
+  }
+
+  exit() {
+    this.isFinished = true;
+  }
+
+  onInteraction() {
+    exit();
+  }
+
+}
+
+class ChatState {
+
+  constructor(owner, game) {
+
+    this.name = "chatState";
+    this.owner = owner;
+    this.game = game;
+    this.isFinished = false;
+
+    this.dialogueController.ParseData(areaJSON, function (d) {
+      console.log("A conversation finished:", d);
+      this.exit();
+    }, true);
+
+  }
+
+  enter(dialogueDep) {
+
+    this.isFinished = false;
+
+    if (!dialogueDep.started) {
+      dialogueDep.Start();
+      return;
+    }
+
+    // If you really feel daring, consider adding 'events' to the enter and
+    // exit of the nodes. This will add for even more flexibility. 'If'.
+    let result = dialogueDep.Next();
+
+    if (result.length > 1) {
+      console.info("Result was question:");
+      console.log(result);
+      // nodeController.Answer(1) - wait for input...
+    } else {
+      console.info("Result was speech");
+      console.log(result[0]);
+    }
+
+  }
+
+  update() {
+    // ...
+  }
+
+  exit() {
+
+    this.isFinished = true;
+
+  }
 
 }
